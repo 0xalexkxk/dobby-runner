@@ -427,12 +427,9 @@ app.get('/api/leaderboard', /* leaderboardLimiter, */ async (req, res) => {
     }
 });
 
-// Admin route to clear leaderboard (protected in production)
-app.post('/api/admin/clear-leaderboard', (req, res) => {
-    // In production, add authentication here
-    if (process.env.NODE_ENV === 'production') {
-        return res.status(403).json({ error: 'Forbidden' });
-    }
+// Admin route to clear leaderboard (GET version for easy browser access)
+app.get('/api/admin/clear-leaderboard', (req, res) => {
+    // Temporarily enabled for setup
     
     db.run('DELETE FROM scores', function(err) {
         if (err) {
