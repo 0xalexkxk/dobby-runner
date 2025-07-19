@@ -438,6 +438,10 @@ app.get('/api/admin/clear-leaderboard', (req, res) => {
         }
         
         console.log(`Cleared ${this.changes} scores from leaderboard`);
+        
+        // Clear leaderboard cache
+        leaderboardCache.data = null;
+        
         res.json({ success: true, message: `Cleared ${this.changes} scores from leaderboard` });
     });
 });
