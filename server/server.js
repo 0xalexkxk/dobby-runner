@@ -65,7 +65,9 @@ db.run("PRAGMA temp_store = MEMORY");
 db.run("PRAGMA mmap_size = 268435456"); // 256MB
 
 db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS scores (
+    // Clear all existing scores (aggressive cleanup)
+    db.run(`DROP TABLE IF EXISTS scores`);
+    db.run(`CREATE TABLE scores (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nickname TEXT NOT NULL,
         score INTEGER NOT NULL,
@@ -78,13 +80,11 @@ db.serialize(() => {
         is_valid BOOLEAN DEFAULT 1,
         validation_hash TEXT
     )`);
+    console.log('Leaderboard table recreated and cleared!');
     
     // Create indexes for faster queries
     db.run(`CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_valid_scores ON scores(is_valid, score DESC)`);
-    
-    // Clear all existing scores (one-time cleanup)
-    db.run(`DELETE FROM scores`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_nickname ON scores(nickname)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_timestamp ON scores(timestamp)`);
 });
