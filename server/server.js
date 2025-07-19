@@ -442,7 +442,15 @@ app.get('/api/admin/clear-leaderboard', (req, res) => {
         // Clear leaderboard cache
         leaderboardCache.data = null;
         
-        res.json({ success: true, message: `Cleared ${this.changes} scores from leaderboard` });
+        // Check how many records remain
+        db.get('SELECT COUNT(*) as count FROM scores', (err, row) => {
+            const remaining = row ? row.count : 'unknown';
+            res.json({ 
+                success: true, 
+                message: `Cleared ${this.changes} scores from leaderboard`,
+                remaining_records: remaining
+            });
+        });
     });
 });
 
