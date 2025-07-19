@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dobby Runner</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, 
+                #000000 0%, 
+                #1a1a1a 25%, 
+                #333333 50%, 
+                #1a1a1a 75%, 
+                #000000 100%);
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
+            font-family: 'Comic Sans MS', cursive, Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        #gameContainer {
+            position: relative;
+            background: linear-gradient(145deg, #ffffff, #f5f5f5);
+            border-radius: 20px;
+            box-shadow: 
+                0 20px 60px rgba(0,0,0,0.4),
+                inset 0 1px 0 rgba(255,255,255,0.9),
+                0 0 0 3px #ff6600;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+        
+        #gameCanvas {
+            display: none;
+            border: 3px solid #000000;
+            border-radius: 10px;
+            box-shadow: inset 0 0 50px rgba(255,102,0,0.2), 0 0 20px rgba(0,0,0,0.4);
+        }
+        
+        #nicknameSetup, #mainMenu {
+            text-align: center;
+            padding: 40px;
+            background: linear-gradient(135deg, #ffffff, #f5f5f5, #ffffff);
+            border-radius: 15px;
+            min-width: 400px;
+            box-shadow: 
+                inset 0 1px 0 rgba(255,102,0,0.3),
+                0 8px 24px rgba(0,0,0,0.2);
+            border: 2px solid #ff6600;
+        }
+        
+        #nicknameSetup h1, #mainMenu h1 {
+            font-size: 48px;
+            color: #000000;
+            margin-bottom: 30px;
+            text-shadow: 2px 2px 4px rgba(255,102,0,0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        .dobby-logo {
+            width: 60px;
+            height: 60px;
+            object-fit: contain;
+        }
+        
+        #nicknameSetup h2 {
+            font-size: 32px;
+            color: #000000;
+            margin-bottom: 20px;
+        }
+        
+        #nicknameSetup p {
+            font-size: 18px;
+            color: #333333;
+            margin-bottom: 20px;
+        }
+        
+        #playerNickname {
+            padding: 15px;
+            font-size: 20px;
+            border: 3px solid #ff6600;
+            border-radius: 10px;
+            margin: 20px;
+            width: 250px;
+            text-align: center;
+            background: #ffffff;
+            color: #000000;
+        }
+        
+        #playerInfo {
+            background: linear-gradient(135deg, rgba(255,102,0,0.1), rgba(255,255,255,0.9));
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            font-size: 18px;
+            color: #000000;
+            box-shadow: 
+                inset 0 1px 0 rgba(255,102,0,0.3),
+                0 4px 12px rgba(0,0,0,0.15);
+            border: 2px solid #ff6600;
+            backdrop-filter: blur(5px);
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        
+        @keyframes glow {
+            0%, 100% { box-shadow: 0 0 5px rgba(255,102,0,0.5); }
+            50% { box-shadow: 0 0 20px rgba(255,102,0,0.8), 0 0 30px rgba(255,102,0,0.6); }
+        }
+        
+        /* Audio Control */
+        #audioControl {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            z-index: 1001;
+            width: 170px;
+            height: 35px;
+        }
+        
+        #audioButton {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 35px;
+            height: 35px;
+            border: none;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.7);
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        
+        #audioButton:hover {
+            background: rgba(255,102,0,0.8);
+            transform: scale(1.1);
+        }
+        
+        #volumeSlider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 120px;
+            height: 35px;
+            background: rgba(0,0,0,0.8);
+            border-radius: 18px;
+            display: none;
+            align-items: center;
+            padding: 0 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            transition: opacity 0.3s;
+        }
+        
+        #audioControl:hover #volumeSlider {
+            display: flex;
+        }
+        
+        #volumeRange {
+            width: 100%;
+            height: 5px;
+            background: #333;
+            outline: none;
+            border-radius: 5px;
+            appearance: none;
+        }
+        
+        #volumeRange::-webkit-slider-thumb {
+            appearance: none;
+            width: 15px;
+            height: 15px;
+            background: #ff6600;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+        
+        #volumeRange::-moz-range-thumb {
+            width: 15px;
+            height: 15px;
+            background: #ff6600;
+            border-radius: 50%;
+            cursor: pointer;
+            border: none;
+        }
+        
+        .menuButton {
+            display: block;
+            width: 200px;
+            margin: 20px auto;
+            padding: 15px 30px;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            background: linear-gradient(135deg, #ff6600, #ff4400);
+            border: 2px solid #000000;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        
+        .menuButton:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+            background: linear-gradient(135deg, #ff7700, #ff5500);
+        }
+        
+        .menuButton:active {
+            transform: translateY(0);
+        }
+        
+        #gameUI {
+            display: none;
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 200px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #333333;
+            background: linear-gradient(135deg, rgba(255,255,255,0.9) 0%, rgba(255,200,150,0.9) 100%);
+            padding: 12px;
+            border-radius: 10px;
+            border: 2px solid #ff6600;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            backdrop-filter: blur(5px);
+        }
+        
+        #gameUI div {
+            padding: 4px 0;
+            border: none;
+            background: none;
+            box-shadow: none;
+            animation: none;
+        }
+        
+        #gameOverScreen {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: linear-gradient(145deg, rgba(255,255,255,0.98), rgba(240,240,240,0.95));
+            padding: 40px;
+            border-radius: 20px;
+            text-align: center;
+            box-shadow: 
+                0 20px 60px rgba(0,0,0,0.5),
+                inset 0 1px 0 rgba(255,102,0,0.3);
+            border: 3px solid #ff6600;
+            backdrop-filter: blur(15px);
+        }
+        
+        #gameOverScreen h2 {
+            font-size: 36px;
+            color: #000000;
+            margin-bottom: 20px;
+            text-shadow: 1px 1px 2px rgba(255,102,0,0.3);
+        }
+        
+        #gameOverInfo {
+            background: linear-gradient(135deg, rgba(255,102,0,0.1), rgba(255,255,255,0.9));
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            font-size: 20px;
+            color: #000000;
+            box-shadow: 
+                inset 0 2px 0 rgba(255,102,0,0.3),
+                0 6px 18px rgba(0,0,0,0.15);
+            border: 2px solid #ff6600;
+        }
+        
+        #scoreActions {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            align-items: center;
+        }
+        
+        #lockScoreButton {
+            background: linear-gradient(135deg, #ff6600, #ff4400);
+            font-size: 20px;
+            padding: 12px 25px;
+            border: 2px solid #000000;
+        }
+        
+        #playAgainButton {
+            background: linear-gradient(135deg, #333333, #000000);
+            font-size: 18px;
+            border: 2px solid #ff6600;
+        }
+        
+        #leaderboardScreen {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            background: linear-gradient(145deg, #ffffff, #f8f8f8);
+            border-radius: 15px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 
+                0 15px 45px rgba(0,0,0,0.3),
+                inset 0 1px 0 rgba(255,102,0,0.3);
+            border: 3px solid #ff6600;
+        }
+        
+        #leaderboardScreen h2 {
+            font-size: 36px;
+            color: #000000;
+            margin-bottom: 20px;
+            text-shadow: 1px 1px 2px rgba(255,102,0,0.3);
+        }
+        
+        .leaderboardEntry {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 20px;
+            margin: 5px 0;
+            background: linear-gradient(135deg, #ffffff, #f5f5f5);
+            border-radius: 10px;
+            font-size: 20px;
+            border: 1px solid #ff6600;
+            color: #000000;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .leaderboardEntry:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        }
+        
+        .leaderboardEntry:nth-child(1) { 
+            background: linear-gradient(135deg, #ff6600, #ff8800, #ffaa00); 
+            color: white;
+            border: 2px solid #000000;
+            animation: glow 2s infinite;
+            font-weight: bold;
+        }
+        .leaderboardEntry:nth-child(2) { 
+            background: linear-gradient(135deg, #333333, #555555, #777777); 
+            color: white;
+            border: 2px solid #ff6600;
+            font-weight: bold;
+        }
+        .leaderboardEntry:nth-child(3) { 
+            background: linear-gradient(135deg, #000000, #222222, #444444); 
+            color: white;
+            border: 2px solid #ff6600;
+            font-weight: bold;
+        }
+        
+        #instructions {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-align: left;
+            color: #000000;
+            font-size: 12px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 8px 12px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 1000;
+            display: none; /* Hidden by default */
+            width: auto;
+            max-width: 250px;
+            border: 2px solid #ff6600;
+        }
+        
+        /* Mobile controls */
+        #mobileControls {
+            display: none;
+            position: relative;
+            margin: 5px 0;
+            height: 70px;
+            width: 100%;
+            z-index: 1000;
+        }
+        
+        .mobileButton {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 2px solid #000000;
+            background: linear-gradient(135deg, #ff6600, #ff4400);
+            color: white;
+            font-size: 20px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 3px 12px rgba(0,0,0,0.4);
+            cursor: pointer;
+            user-select: none;
+            transition: all 0.1s;
+        }
+        
+        .mobileButton:active {
+            transform: scale(0.95);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+        }
+        
+        #jumpButton {
+            left: 30px;
+            top: 10px;
+            background: linear-gradient(135deg, #ff6600, #ff4400);
+        }
+        
+        #shootButton {
+            right: 30px;
+            top: 10px;
+            background: linear-gradient(135deg, #333333, #000000);
+        }
+        
+        /* Mobile responsive styles */
+        @media (max-width: 768px) {
+            body {
+                overflow: hidden;
+                height: 100vh;
+            }
+            
+            #gameContainer {
+                padding: 3px;
+                margin: 3px;
+                width: calc(100vw - 6px);
+                max-width: none;
+                height: calc(100vh - 6px);
+                display: flex;
+                flex-direction: column;
+                justify-content: flex-start;
+                align-items: center;
+            }
+            
+            #nicknameSetup, #mainMenu {
+                min-width: auto;
+                width: 100%;
+                padding: 20px;
+            }
+            
+            #nicknameSetup h1, #mainMenu h1 {
+                font-size: 32px;
+            }
+            
+            #gameUI {
+                font-size: 10px;
+                width: 120px;
+                padding: 8px;
+                top: 5px;
+                left: 5px;
+            }
+            
+            #instructions {
+                display: none !important;
+            }
+            
+            #audioControl {
+                top: 8px;
+                right: 8px;
+                width: 140px;
+                height: 30px;
+            }
+            
+            #audioButton {
+                width: 30px;
+                height: 30px;
+                font-size: 14px;
+            }
+            
+            #volumeSlider {
+                width: 100px;
+                height: 30px;
+            }
+            
+            #gameCanvas {
+                width: 100%;
+                height: auto;
+                max-width: 400px;
+                max-height: 500px;
+                margin: 5px 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <div id="nicknameSetup">
+            <h1><img src="dobby-logo.png" alt="Dobby" class="dobby-logo"> Dobby Runner</h1>
+            <h2>Welcome!</h2>
+            <p>Enter your nickname to start playing:</p>
+            <input type="text" id="playerNickname" placeholder="Your nickname" maxlength="20">
+            <br>
+            <button class="menuButton" id="setNicknameButton">Start Playing</button>
+        </div>
+        
+        <div id="mainMenu" style="display: none;">
+            <h1><img src="dobby-logo.png" alt="Dobby" class="dobby-logo"> Dobby Runner</h1>
+            <div id="playerInfo">
+                <p>Player: <span id="currentPlayer"></span></p>
+                <p>Best Score: <span id="personalBest">0</span></p>
+            </div>
+            <button class="menuButton" id="playButton">Play</button>
+            <button class="menuButton" id="leaderboardButton">Leaderboard</button>
+            <button class="menuButton" id="changeNicknameButton">Change Nickname</button>
+        </div>
+        
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="gameUI">
+            <div>Score: <span id="score">0</span></div>
+            <div style="color: #FFD700; font-weight: bold;">Level: <span id="level">1</span></div>
+            <div style="color: #FF6347; font-weight: bold;">Speed: <span id="gameSpeed">5.0</span>x</div>
+            <div id="speedBoostIndicator" style="display: none; color: #00FFFF; font-weight: bold;">🚀 SPEED BOOST!</div>
+        </div>
+        
+        <div id="gameOverScreen">
+            <h2>Game Over!</h2>
+            <div id="gameOverInfo">
+                <p>Player: <span id="gameOverPlayer"></span></p>
+                <p>Final Score: <span id="finalScore">0</span></p>
+                <p>Personal Best: <span id="gameOverBest">0</span></p>
+            </div>
+            <p style="font-size: 14px; color: #666; margin: 10px 0;">💡 Press SPACE/ENTER or tap screen to play again quickly!</p>
+            <div id="scoreActions">
+                <button class="menuButton" id="lockScoreButton">🔒 Lock Score</button>
+                <button class="menuButton" id="playAgainButton">🔄 Play Again (ENTER/SPACE)</button>
+                <button class="menuButton" id="backToMenuButton">📋 Main Menu</button>
+            </div>
+        </div>
+        
+        <div id="leaderboardScreen">
+            <h2>🏆 Leaderboard</h2>
+            <div id="leaderboardList"></div>
+            <button class="menuButton" id="backToMenuButton2">Back</button>
+        </div>
+        
+        <div id="instructions">
+            <p>↑ / W - Jump | SPACE / Click - Shoot</p>
+            <p>Double Jump: W+W or ↑+↑ quickly</p>
+            <p style="color: #ffdd44; font-weight: bold;">💡 Make sure to lock your Score!</p>
+        </div>
+        
+        <div id="mobileControls">
+            <div id="jumpButton" class="mobileButton">🦘</div>
+            <div id="shootButton" class="mobileButton">🔫</div>
+        </div>
+        
+        <!-- Audio Control -->
+        <div id="audioControl">
+            <button id="audioButton">🔊</button>
+            <div id="volumeSlider">
+                <input type="range" id="volumeRange" min="0" max="100" value="30">
+            </div>
+        </div>
+        
+        <audio id="backgroundMusic" loop preload="auto">
+            <source src="background-music.mp3" type="audio/mpeg">
+        </audio>
+    </div>
+    
+    <script src="game.js"></script>
+</body>
+</html>
