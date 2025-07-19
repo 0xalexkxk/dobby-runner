@@ -82,6 +82,9 @@ db.serialize(() => {
     // Create indexes for faster queries
     db.run(`CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_valid_scores ON scores(is_valid, score DESC)`);
+    
+    // Clear all existing scores (one-time cleanup)
+    db.run(`DELETE FROM scores`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_nickname ON scores(nickname)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_timestamp ON scores(timestamp)`);
 });
