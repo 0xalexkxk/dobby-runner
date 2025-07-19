@@ -1,4 +1,4 @@
-# 🍩 Donut Runner
+# 🐶 Dobby Runner
 
 An exciting endless runner game where you control a donut collecting XP and shooting tea cups while avoiding kitchen obstacles!
 
