@@ -1,5 +1,5 @@
 // Game Configuration - ngrok URL
-const SERVER_URL = 'https://5c125c410f86.ngrok-free.app';
+const SERVER_URL = 'https://donut-runner.onrender.com';
 
 // Mobile detection
 const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth <= 768;
