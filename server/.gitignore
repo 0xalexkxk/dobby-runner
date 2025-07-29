@@ -4,4 +4,4 @@ node_modules/
 .env.production
 leaderboard.db
 *.log
-.DS_Store
+.DS_Store.env
