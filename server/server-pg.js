@@ -18,9 +18,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
 
-// PostgreSQL connection pool with IPv4 Supabase pooler
+// PostgreSQL connection pool with IPv4 Supabase pooler (Session mode)
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://postgres.rcyxbenthvrgzhyltuwh:DobbyRunner123@aws-0-eu-central-1.pooler.supabase.com:6543/postgres',
+    connectionString: process.env.DATABASE_URL || 'postgresql://postgres.rcyxbenthvrgzhyltuwh:DobbyRunner123@aws-0-eu-central-1.pooler.supabase.com:5432/postgres',
     ssl: {
         rejectUnauthorized: false
     },
