@@ -1,16 +1,41 @@
 const express = require('express');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const path = require('path');
-const cluster = require('cluster');
-const os = require('os');
+
+// Load environment variables
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
+
+// PostgreSQL connection pool - direct config to avoid IPv6 issues
+const pool = new Pool({
+    host: 'db.yzpybjdnxoearneimpqw.supabase.co',
+    port: 5432,
+    database: 'postgres',
+    user: 'postgres',
+    password: 'Derrixgod228!',
+    ssl: {
+        rejectUnauthorized: false
+    },
+    max: 20, // maximum number of clients in the pool
+    idleTimeoutMillis: 30000, // how long a client is allowed to remain idle before being closed
+    connectionTimeoutMillis: 10000, // how long to wait for a connection
+});
+
+// Test database connection
+pool.query('SELECT NOW()', (err, res) => {
+    if (err) {
+        console.error('Database connection error:', err);
+    } else {
+        console.log('Database connected at:', res.rows[0].now);
+    }
+});
 
 // Trust proxy only for ngrok (localhost)
 app.set('trust proxy', '127.0.0.1');
@@ -27,6 +52,7 @@ app.use(helmet({
         }
     }
 }));
+
 // Allow all origins for testing (change this in production!)
 app.use(cors({
     origin: true, // Allow all origins for public testing
@@ -34,94 +60,40 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '100kb' })); // Increased limit for game events
 
-// Rate limiting optimized for 100 concurrent users
-const submitLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100, // Higher for load testing
-    message: 'Too many score submissions, please try again later.',
-    standardHeaders: true,
-    legacyHeaders: false,
-    skipSuccessfulRequests: false,
-    skipFailedRequests: false,
-    validate: false
-});
-
-const leaderboardLimiter = rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 1000, // Much higher for leaderboard requests during testing
-    standardHeaders: true,
-    legacyHeaders: false,
-    validate: false
-});
-
-// Database setup with performance optimizations
-const db = new sqlite3.Database('./leaderboard.db');
-
-// Enable WAL mode for better concurrent performance
-db.run("PRAGMA journal_mode = WAL");
-db.run("PRAGMA synchronous = NORMAL");
-db.run("PRAGMA cache_size = 10000");
-db.run("PRAGMA temp_store = MEMORY");
-db.run("PRAGMA mmap_size = 268435456"); // 256MB
-
-db.serialize(() => {
-    // Create table only if it doesn't exist
-    db.run(`CREATE TABLE IF NOT EXISTS scores (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nickname TEXT NOT NULL,
-        score INTEGER NOT NULL,
-        xp INTEGER NOT NULL,
-        level INTEGER NOT NULL,
-        game_time INTEGER NOT NULL,
-        ip_address TEXT,
-        user_agent TEXT,
-        timestamp INTEGER NOT NULL,
-        is_valid BOOLEAN DEFAULT 1,
-        validation_hash TEXT
-    )`, (err) => {
-        if (err) {
-            console.error('Error creating scores table:', err);
-        } else {
-            console.log('Leaderboard table ready!');
-        }
-    });
-    
-    // Create indexes for faster queries
-    db.run(`CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_valid_scores ON scores(is_valid, score DESC)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_nickname ON scores(nickname)`);
-    db.run(`CREATE INDEX IF NOT EXISTS idx_timestamp ON scores(timestamp)`);
-});
-
-// Database utilities for better performance
-const dbUtils = {
-    get: (sql, params = []) => {
-        return new Promise((resolve, reject) => {
-            db.get(sql, params, (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-    },
-    
-    all: (sql, params = []) => {
-        return new Promise((resolve, reject) => {
-            db.all(sql, params, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-    },
-    
-    run: (sql, params = []) => {
-        return new Promise((resolve, reject) => {
-            db.run(sql, params, function(err) {
-                if (err) reject(err);
-                else resolve({ lastID: this.lastID, changes: this.changes });
-            });
-        });
+// Initialize database tables
+async function initDB() {
+    try {
+        // Create table if not exists
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS scores (
+                id SERIAL PRIMARY KEY,
+                nickname TEXT NOT NULL,
+                score INTEGER NOT NULL,
+                xp INTEGER NOT NULL,
+                level INTEGER NOT NULL,
+                game_time INTEGER NOT NULL,
+                ip_address TEXT,
+                user_agent TEXT,
+                timestamp BIGINT NOT NULL,
+                is_valid BOOLEAN DEFAULT true,
+                validation_hash TEXT
+            )
+        `);
+        
+        // Create indexes for better performance
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_valid_scores ON scores(is_valid, score DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_nickname ON scores(nickname)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_timestamp ON scores(timestamp)`);
+        
+        console.log('Database tables initialized successfully!');
+    } catch (err) {
+        console.error('Error initializing database:', err);
     }
-};
+}
+
+// Initialize DB on startup
+initDB();
 
 // Simple in-memory cache for leaderboard
 let leaderboardCache = {
@@ -254,7 +226,7 @@ class AntiCheat {
 }
 
 // API Routes
-app.post('/api/submit-score', /* submitLimiter, */ async (req, res) => {
+app.post('/api/submit-score', async (req, res) => {
     try {
         requestStats.submitCount++;
         const gameData = req.body;
@@ -281,25 +253,28 @@ app.post('/api/submit-score', /* submitLimiter, */ async (req, res) => {
         const validationHash = AntiCheat.generateValidationHash(gameData);
         
         // Check if player already has a score
-        const existingScore = await dbUtils.get('SELECT score FROM scores WHERE nickname = ?', [nickname]);
+        const existingScore = await pool.query(
+            'SELECT score FROM scores WHERE nickname = $1 LIMIT 1',
+            [nickname]
+        );
         
-        if (existingScore) {
+        if (existingScore.rows.length > 0) {
             // Player exists - only update if new score is higher
-            if (gameData.score <= existingScore.score) {
+            if (gameData.score <= existingScore.rows[0].score) {
                 return res.json({ 
                     success: true, 
                     message: 'Score not updated - previous best is higher',
-                    previousBest: existingScore.score,
+                    previousBest: existingScore.rows[0].score,
                     currentScore: gameData.score
                 });
             }
             
             // Update existing record with higher score
-            await dbUtils.run(`
+            await pool.query(`
                 UPDATE scores 
-                SET score = ?, xp = ?, level = ?, game_time = ?, 
-                    ip_address = ?, user_agent = ?, timestamp = ?, validation_hash = ?
-                WHERE nickname = ?
+                SET score = $1, xp = $2, level = $3, game_time = $4, 
+                    ip_address = $5, user_agent = $6, timestamp = $7, validation_hash = $8
+                WHERE nickname = $9
             `, [
                 gameData.score,
                 gameData.xp,
@@ -318,14 +293,14 @@ app.post('/api/submit-score', /* submitLimiter, */ async (req, res) => {
             res.json({ 
                 success: true, 
                 message: 'New high score updated!',
-                previousBest: existingScore.score,
+                previousBest: existingScore.rows[0].score,
                 newBest: gameData.score
             });
         } else {
             // New player - insert score
-            await dbUtils.run(`
+            await pool.query(`
                 INSERT INTO scores (nickname, score, xp, level, game_time, ip_address, user_agent, timestamp, validation_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             `, [
                 nickname,
                 gameData.score,
@@ -352,7 +327,7 @@ app.post('/api/submit-score', /* submitLimiter, */ async (req, res) => {
 });
 
 // Update nickname
-app.post('/api/update-nickname', /* submitLimiter, */ (req, res) => {
+app.post('/api/update-nickname', async (req, res) => {
     try {
         const { oldNickname, newNickname } = req.body;
         
@@ -369,36 +344,30 @@ app.post('/api/update-nickname', /* submitLimiter, */ (req, res) => {
         }
         
         // Check if new nickname already exists
-        db.get('SELECT nickname FROM scores WHERE nickname = ?', [cleanNewNickname], (err, row) => {
-            if (err) {
-                console.error('Database error:', err);
-                return res.status(500).json({ error: 'Database error' });
-            }
-            
-            if (row && cleanOldNickname !== cleanNewNickname) {
-                return res.status(400).json({ error: 'Nickname already taken' });
-            }
-            
-            // Update the nickname
-            const updateStmt = db.prepare('UPDATE scores SET nickname = ? WHERE nickname = ?');
-            updateStmt.run(cleanNewNickname, cleanOldNickname, function(err) {
-                if (err) {
-                    console.error('Database error:', err);
-                    updateStmt.finalize();
-                    return res.status(500).json({ error: 'Failed to update nickname' });
-                }
-                
-                updateStmt.finalize();
-                res.json({ success: true, message: 'Nickname updated successfully' });
-            });
-        });
+        const existing = await pool.query(
+            'SELECT nickname FROM scores WHERE nickname = $1 LIMIT 1',
+            [cleanNewNickname]
+        );
+        
+        if (existing.rows.length > 0 && cleanOldNickname !== cleanNewNickname) {
+            return res.status(400).json({ error: 'Nickname already taken' });
+        }
+        
+        // Update the nickname
+        await pool.query(
+            'UPDATE scores SET nickname = $1 WHERE nickname = $2',
+            [cleanNewNickname, cleanOldNickname]
+        );
+        
+        res.json({ success: true, message: 'Nickname updated successfully' });
+        
     } catch (error) {
         console.error('Error updating nickname:', error);
         res.status(500).json({ error: 'Server error' });
     }
 });
 
-app.get('/api/leaderboard', /* leaderboardLimiter, */ async (req, res) => {
+app.get('/api/leaderboard', async (req, res) => {
     try {
         requestStats.leaderboardCount++;
         const limit = Math.min(parseInt(req.query.limit) || 50, 100);
@@ -410,20 +379,21 @@ app.get('/api/leaderboard', /* leaderboardLimiter, */ async (req, res) => {
         }
         
         // Get fresh data from database
-        const rows = await dbUtils.all(`
-            SELECT nickname, MAX(score) as score, level, timestamp
+        const result = await pool.query(`
+            SELECT nickname, MAX(score) as score, 
+                   MAX(level) as level, MAX(timestamp) as timestamp
             FROM scores
-            WHERE is_valid = 1
+            WHERE is_valid = true
             GROUP BY nickname
             ORDER BY score DESC
-            LIMIT ?
+            LIMIT $1
         `, [100]); // Always fetch top 100 for cache
         
         // Cache the results
-        setCachedLeaderboard(rows);
+        setCachedLeaderboard(result.rows);
         
         // Return requested limit
-        res.json(rows.slice(0, limit));
+        res.json(result.rows.slice(0, limit));
     } catch (error) {
         requestStats.errorCount++;
         console.error('Error fetching leaderboard:', error);
@@ -432,93 +402,105 @@ app.get('/api/leaderboard', /* leaderboardLimiter, */ async (req, res) => {
 });
 
 // Admin route to clear leaderboard (GET version for easy browser access)
-app.get('/api/admin/clear-leaderboard', (req, res) => {
+app.get('/api/admin/clear-leaderboard', async (req, res) => {
     // TEMPORARILY DISABLED - Remove this block when ready to enable
     return res.status(403).json({ 
         error: 'Clear leaderboard is temporarily disabled',
         message: 'This endpoint has been temporarily disabled for maintenance'
     });
     
-    db.run('DELETE FROM scores', function(err) {
-        if (err) {
-            console.error('Error clearing leaderboard:', err);
-            return res.status(500).json({ error: 'Failed to clear leaderboard' });
-        }
+    try {
+        const result = await pool.query('DELETE FROM scores');
         
-        console.log(`Cleared ${this.changes} scores from leaderboard`);
+        console.log(`Cleared ${result.rowCount} scores from leaderboard`);
         
         // Clear leaderboard cache
         leaderboardCache.data = null;
         
         // Check how many records remain
-        db.get('SELECT COUNT(*) as count FROM scores', (err, row) => {
-            const remaining = row ? row.count : 'unknown';
-            res.json({ 
-                success: true, 
-                message: `Cleared ${this.changes} scores from leaderboard`,
-                remaining_records: remaining
-            });
+        const countResult = await pool.query('SELECT COUNT(*) as count FROM scores');
+        const remaining = countResult.rows[0].count;
+        
+        res.json({ 
+            success: true, 
+            message: `Cleared ${result.rowCount} scores from leaderboard`,
+            remaining_records: remaining
         });
-    });
+    } catch (error) {
+        console.error('Error clearing leaderboard:', error);
+        res.status(500).json({ error: 'Failed to clear leaderboard' });
+    }
 });
 
 // Admin route to check suspicious scores (protected in production)
-app.get('/api/admin/suspicious', (req, res) => {
+app.get('/api/admin/suspicious', async (req, res) => {
     // In production, add authentication here
     if (process.env.NODE_ENV === 'production') {
         return res.status(403).json({ error: 'Forbidden' });
     }
     
-    db.all(`
-        SELECT *
-        FROM scores
-        WHERE is_valid = 0
-        OR score > 1000
-        OR game_time < score * 10
-        ORDER BY timestamp DESC
-        LIMIT 50
-    `, (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: 'Server error' });
-        }
-        res.json(rows);
-    });
+    try {
+        const result = await pool.query(`
+            SELECT *
+            FROM scores
+            WHERE is_valid = false
+            OR score > 1000
+            OR game_time < score * 10
+            ORDER BY timestamp DESC
+            LIMIT 50
+        `);
+        
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching suspicious scores:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
 });
 
 // Admin route to backup all scores
-app.get('/api/admin/backup-scores', (req, res) => {
+app.get('/api/admin/backup-scores', async (req, res) => {
     // In production, add authentication here
     if (process.env.NODE_ENV === 'production') {
         return res.status(403).json({ error: 'Forbidden' });
     }
     
-    db.all(`
-        SELECT *
-        FROM scores
-        ORDER BY timestamp DESC
-    `, (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: 'Server error' });
-        }
+    try {
+        const result = await pool.query(`
+            SELECT *
+            FROM scores
+            ORDER BY timestamp DESC
+        `);
         
         // Set headers for file download
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Content-Disposition', `attachment; filename="donut-runner-scores-${new Date().toISOString().split('T')[0]}.json"`);
         res.json({
             exportDate: new Date().toISOString(),
-            totalScores: rows.length,
-            scores: rows
+            totalScores: result.rows.length,
+            scores: result.rows
         });
-    });
+    } catch (error) {
+        console.error('Error backing up scores:', error);
+        res.status(500).json({ error: 'Server error' });
+    }
 });
 
 // Health check endpoint
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
     const uptime = process.uptime();
     const memUsage = process.memoryUsage();
     
+    // Check database connection
+    let dbStatus = 'healthy';
+    try {
+        await pool.query('SELECT 1');
+    } catch (err) {
+        dbStatus = 'unhealthy';
+    }
+    
     res.json({
-        status: 'healthy',
+        status: dbStatus === 'healthy' ? 'healthy' : 'degraded',
+        database: dbStatus,
         uptime: `${Math.floor(uptime / 60)} minutes`,
         memory: {
             rss: `${Math.round(memUsage.rss / 1024 / 1024)} MB`,
@@ -554,12 +536,12 @@ server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🏠 Local access: http://localhost:${PORT}`);
     console.log(`📍 Local network: http://192.168.100.177:${PORT}`);
     console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`Database: ${process.env.DATABASE_URL ? 'PostgreSQL (Supabase)' : 'Not configured!'}`);
     console.log('🎮 Share this URL with friends: https://4f29-2a03-f680-fe04-49c4-6cc3-703c-5cd-ae7d.ngrok-free.app');
     console.log('💪 Server optimized for 100+ concurrent users');
 });
 
 // Graceful shutdown
-
 function gracefulShutdown(signal) {
     console.log(`\n${signal} signal received: starting graceful shutdown`);
     
@@ -572,13 +554,13 @@ function gracefulShutdown(signal) {
             
             console.log('HTTP server closed');
             
-            // Close database connection
-            db.close((err) => {
+            // Close database connection pool
+            pool.end((err) => {
                 if (err) {
-                    console.error('Error closing database:', err);
+                    console.error('Error closing database pool:', err);
                     process.exit(1);
                 }
-                console.log('Database connection closed');
+                console.log('Database connection pool closed');
                 console.log('Graceful shutdown complete');
                 process.exit(0);
             });
