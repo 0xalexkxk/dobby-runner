@@ -13,9 +13,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
 
-// PostgreSQL connection pool with fallback for IPv6 issues
+// PostgreSQL connection pool with IPv4 Supabase pooler
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://postgres:Derrixgod228!@db.yzpybjdnxoearneimpqw.supabase.co:6543/postgres',
+    connectionString: process.env.DATABASE_URL || 'postgresql://postgres.rcyxbenthvrgzhyltuwh:Derrixgod228!@aws-0-eu-central-1.pooler.supabase.com:6543/postgres',
     ssl: {
         rejectUnauthorized: false
     },
