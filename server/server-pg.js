@@ -18,16 +18,29 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
 
-// PostgreSQL connection pool with detailed config for debugging
-const connectionConfig = {
+// PostgreSQL connection pool with multiple SSL configurations to try
+const sslConfigs = [
+    // Try 1: Standard SSL config
+    {
+        rejectUnauthorized: false
+    },
+    // Try 2: More permissive SSL
+    {
+        rejectUnauthorized: false,
+        ca: false,
+        checkServerIdentity: false
+    },
+    // Try 3: Require SSL but don't verify
+    'require'
+];
+
+let connectionConfig = {
     host: 'aws-0-eu-central-1.pooler.supabase.com',
     port: 5432,
     database: 'postgres',
     user: 'postgres.rcyxbenthvrgzhyltuwh',
     password: 'DobbyRunner123',
-    ssl: {
-        rejectUnauthorized: false
-    },
+    ssl: sslConfigs[0], // Start with first config
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 15000,
@@ -42,16 +55,47 @@ console.log("🔧 Connection Config:", {
     ssl: connectionConfig.ssl
 });
 
-const pool = new Pool(connectionConfig);
-
-// Test database connection
-pool.query('SELECT NOW()', (err, res) => {
-    if (err) {
-        console.error('Database connection error:', err);
-    } else {
-        console.log('Database connected at:', res.rows[0].now);
+// Function to try different SSL configurations
+async function createPoolWithFallback() {
+    for (let i = 0; i < sslConfigs.length; i++) {
+        try {
+            console.log(`🔄 Trying SSL config ${i + 1}/${sslConfigs.length}:`, sslConfigs[i]);
+            
+            const testConfig = { ...connectionConfig, ssl: sslConfigs[i] };
+            const testPool = new Pool(testConfig);
+            
+            // Test the connection
+            const client = await testPool.connect();
+            const result = await client.query('SELECT NOW()');
+            client.release();
+            
+            console.log(`✅ SSL config ${i + 1} worked! Connected at:`, result.rows[0].now);
+            return testPool;
+            
+        } catch (error) {
+            console.log(`❌ SSL config ${i + 1} failed:`, error.message);
+            if (i === sslConfigs.length - 1) {
+                throw new Error(`All SSL configurations failed. Last error: ${error.message}`);
+            }
+        }
     }
+}
+
+// Create pool with fallback
+let pool = new Pool(connectionConfig); // Default pool for immediate use
+
+// Try to connect with better SSL config
+createPoolWithFallback().then(successPool => {
+    pool = successPool;
+    console.log('🎉 Database pool created successfully!');
+    initDB(); // Initialize database after successful connection
+}).catch(error => {
+    console.error('💥 All connection attempts failed:', error.message);
+    console.log('Using default pool configuration...');
+    initDB(); // Try with default pool anyway
 });
+
+// Remove the immediate test since it's handled in createPoolWithFallback
 
 // Trust proxy only for ngrok (localhost)
 app.set('trust proxy', '127.0.0.1');
@@ -108,8 +152,7 @@ async function initDB() {
     }
 }
 
-// Initialize DB on startup
-initDB();
+// DB initialization is now handled after pool creation
 
 // Simple in-memory cache for leaderboard
 let leaderboardCache = {
