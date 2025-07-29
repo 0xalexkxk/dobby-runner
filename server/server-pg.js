@@ -13,19 +13,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
 
-// PostgreSQL connection pool - direct config to avoid IPv6 issues
+// PostgreSQL connection pool with fallback for IPv6 issues
 const pool = new Pool({
-    host: 'db.yzpybjdnxoearneimpqw.supabase.co',
-    port: 5432,
-    database: 'postgres',
-    user: 'postgres',
-    password: 'Derrixgod228!',
+    connectionString: process.env.DATABASE_URL || 'postgresql://postgres:Derrixgod228!@db.yzpybjdnxoearneimpqw.supabase.co:6543/postgres',
     ssl: {
         rejectUnauthorized: false
     },
-    max: 20, // maximum number of clients in the pool
-    idleTimeoutMillis: 30000, // how long a client is allowed to remain idle before being closed
-    connectionTimeoutMillis: 10000, // how long to wait for a connection
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 15000,
 });
 
 // Test database connection
