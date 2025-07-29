@@ -18,16 +18,31 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
 
-// PostgreSQL connection pool with IPv4 Supabase pooler (Session mode)
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL || 'postgresql://postgres.rcyxbenthvrgzhyltuwh:DobbyRunner123@aws-0-eu-central-1.pooler.supabase.com:5432/postgres',
+// PostgreSQL connection pool with detailed config for debugging
+const connectionConfig = {
+    host: 'aws-0-eu-central-1.pooler.supabase.com',
+    port: 5432,
+    database: 'postgres',
+    user: 'postgres.rcyxbenthvrgzhyltuwh',
+    password: 'DobbyRunner123',
     ssl: {
         rejectUnauthorized: false
     },
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 15000,
+};
+
+console.log("🔧 Connection Config:", {
+    host: connectionConfig.host,
+    port: connectionConfig.port,
+    database: connectionConfig.database,
+    user: connectionConfig.user,
+    password: connectionConfig.password.replace(/./g, '*'),
+    ssl: connectionConfig.ssl
 });
+
+const pool = new Pool(connectionConfig);
 
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
