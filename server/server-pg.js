@@ -9,6 +9,11 @@ const path = require('path');
 // Load environment variables
 require('dotenv').config();
 
+// Debug Environment Variables
+console.log("⛳ ENV DATABASE_URL:", process.env.DATABASE_URL);
+console.log("⛳ ENV NODE_ENV:", process.env.NODE_ENV);
+console.log("⛳ ALL ENV KEYS:", Object.keys(process.env).filter(key => key.includes('DATABASE')));
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
