@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const sqlite3 = require('sqlite3').verbose();
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
@@ -107,21 +108,84 @@ async function createPoolWithFallback() {
     throw new Error(`All connection attempts failed. Tried ${connectionTargets.length} targets x ${sslConfigs.length} SSL configs.`);
 }
 
-// Create pool with fallback
+// Database configuration
 let pool = new Pool(connectionConfig); // Default pool for immediate use
+let db = null; // SQLite fallback
+let usingPostgreSQL = true;
 
 // Try to connect with better SSL config
 createPoolWithFallback().then(successPool => {
     pool = successPool;
-    console.log('🎉 Database pool created successfully!');
+    console.log('🎉 PostgreSQL connection successful!');
     initDB(); // Initialize database after successful connection
 }).catch(error => {
-    console.error('💥 All connection attempts failed:', error.message);
-    console.log('Using default pool configuration...');
-    initDB(); // Try with default pool anyway
+    console.error('💥 All PostgreSQL attempts failed:', error.message);
+    console.log('🔄 Falling back to SQLite for local storage...');
+    setupSQLiteFallback();
 });
 
-// Remove the immediate test since it's handled in createPoolWithFallback
+// SQLite fallback setup
+function setupSQLiteFallback() {
+    console.log('⚡ Setting up SQLite fallback database...');
+    usingPostgreSQL = false;
+    
+    db = new sqlite3.Database('./leaderboard.db');
+    db.run("PRAGMA journal_mode = WAL");
+    db.run("PRAGMA synchronous = NORMAL");
+    
+    db.serialize(() => {
+        db.run(`CREATE TABLE IF NOT EXISTS scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nickname TEXT NOT NULL,
+            score INTEGER NOT NULL,
+            xp INTEGER NOT NULL,
+            level INTEGER NOT NULL,
+            game_time INTEGER NOT NULL,
+            ip_address TEXT,
+            user_agent TEXT,
+            timestamp INTEGER NOT NULL,
+            is_valid BOOLEAN DEFAULT 1,
+            validation_hash TEXT
+        )`);
+        
+        db.run(`CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_valid_scores ON scores(is_valid, score DESC)`);
+        
+        console.log('✅ SQLite fallback ready! Data will be saved locally.');
+        initDB(); // Initialize with SQLite
+    });
+}
+
+// Hybrid database utilities that work with both PostgreSQL and SQLite
+const dbUtils = {
+    async query(sql, params = []) {
+        if (usingPostgreSQL) {
+            const result = await pool.query(sql, params);
+            return result.rows;
+        } else {
+            return new Promise((resolve, reject) => {
+                db.all(sql, params, (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                });
+            });
+        }
+    },
+    
+    async run(sql, params = []) {
+        if (usingPostgreSQL) {
+            const result = await pool.query(sql, params);
+            return { rowCount: result.rowCount };
+        } else {
+            return new Promise((resolve, reject) => {
+                db.run(sql, params, function(err) {
+                    if (err) reject(err);
+                    else resolve({ rowCount: this.changes, lastID: this.lastID });
+                });
+            });
+        }
+    }
+};
 
 // Trust proxy only for ngrok (localhost)
 app.set('trust proxy', '127.0.0.1');
@@ -149,30 +213,34 @@ app.use(express.json({ limit: '100kb' })); // Increased limit for game events
 // Initialize database tables
 async function initDB() {
     try {
-        // Create table if not exists
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS scores (
-                id SERIAL PRIMARY KEY,
-                nickname TEXT NOT NULL,
-                score INTEGER NOT NULL,
-                xp INTEGER NOT NULL,
-                level INTEGER NOT NULL,
-                game_time INTEGER NOT NULL,
-                ip_address TEXT,
-                user_agent TEXT,
-                timestamp BIGINT NOT NULL,
-                is_valid BOOLEAN DEFAULT true,
-                validation_hash TEXT
-            )
-        `);
-        
-        // Create indexes for better performance
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_valid_scores ON scores(is_valid, score DESC)`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_nickname ON scores(nickname)`);
-        await pool.query(`CREATE INDEX IF NOT EXISTS idx_timestamp ON scores(timestamp)`);
-        
-        console.log('Database tables initialized successfully!');
+        if (usingPostgreSQL) {
+            // PostgreSQL table creation
+            await dbUtils.run(`
+                CREATE TABLE IF NOT EXISTS scores (
+                    id SERIAL PRIMARY KEY,
+                    nickname TEXT NOT NULL,
+                    score INTEGER NOT NULL,
+                    xp INTEGER NOT NULL,
+                    level INTEGER NOT NULL,
+                    game_time INTEGER NOT NULL,
+                    ip_address TEXT,
+                    user_agent TEXT,
+                    timestamp BIGINT NOT NULL,
+                    is_valid BOOLEAN DEFAULT true,
+                    validation_hash TEXT
+                )
+            `);
+            
+            // Create indexes for better performance
+            await dbUtils.run(`CREATE INDEX IF NOT EXISTS idx_score ON scores(score DESC)`);
+            await dbUtils.run(`CREATE INDEX IF NOT EXISTS idx_valid_scores ON scores(is_valid, score DESC)`);
+            await dbUtils.run(`CREATE INDEX IF NOT EXISTS idx_nickname ON scores(nickname)`);
+            await dbUtils.run(`CREATE INDEX IF NOT EXISTS idx_timestamp ON scores(timestamp)`);
+            
+            console.log('✅ PostgreSQL tables initialized successfully!');
+        } else {
+            console.log('✅ SQLite tables already initialized in setupSQLiteFallback()!');
+        }
     } catch (err) {
         console.error('Error initializing database:', err);
     }
@@ -338,39 +406,47 @@ app.post('/api/submit-score', async (req, res) => {
         const validationHash = AntiCheat.generateValidationHash(gameData);
         
         // Check if player already has a score
-        const existingScore = await pool.query(
-            'SELECT score FROM scores WHERE nickname = $1 LIMIT 1',
+        const existingScore = await dbUtils.query(
+            usingPostgreSQL ? 
+                'SELECT score FROM scores WHERE nickname = $1 LIMIT 1' :
+                'SELECT score FROM scores WHERE nickname = ? LIMIT 1',
             [nickname]
         );
         
-        if (existingScore.rows.length > 0) {
+        if (existingScore.length > 0) {
             // Player exists - only update if new score is higher
-            if (gameData.score <= existingScore.rows[0].score) {
+            if (gameData.score <= existingScore[0].score) {
                 return res.json({ 
                     success: true, 
                     message: 'Score not updated - previous best is higher',
-                    previousBest: existingScore.rows[0].score,
+                    previousBest: existingScore[0].score,
                     currentScore: gameData.score
                 });
             }
             
             // Update existing record with higher score
-            await pool.query(`
-                UPDATE scores 
-                SET score = $1, xp = $2, level = $3, game_time = $4, 
-                    ip_address = $5, user_agent = $6, timestamp = $7, validation_hash = $8
-                WHERE nickname = $9
-            `, [
-                gameData.score,
-                gameData.xp,
-                gameData.level,
-                gameData.gameTime,
-                req.ip,
-                req.get('user-agent'),
-                gameData.timestamp,
-                validationHash,
-                nickname
-            ]);
+            await dbUtils.run(
+                usingPostgreSQL ?
+                    `UPDATE scores 
+                     SET score = $1, xp = $2, level = $3, game_time = $4, 
+                         ip_address = $5, user_agent = $6, timestamp = $7, validation_hash = $8
+                     WHERE nickname = $9` :
+                    `UPDATE scores 
+                     SET score = ?, xp = ?, level = ?, game_time = ?, 
+                         ip_address = ?, user_agent = ?, timestamp = ?, validation_hash = ?
+                     WHERE nickname = ?`,
+                [
+                    gameData.score,
+                    gameData.xp,
+                    gameData.level,
+                    gameData.gameTime,
+                    req.ip,
+                    req.get('user-agent'),
+                    gameData.timestamp,
+                    validationHash,
+                    nickname
+                ]
+            );
             
             // Invalidate leaderboard cache
             leaderboardCache.data = null;
