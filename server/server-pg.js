@@ -24,22 +24,38 @@ const sslConfigs = [
     {
         rejectUnauthorized: false
     },
-    // Try 2: More permissive SSL
+    // Try 2: Disable SSL entirely
+    false,
+    // Try 3: Most permissive SSL
     {
         rejectUnauthorized: false,
-        ca: false,
-        checkServerIdentity: false
+        requestCert: false,
+        agent: false
+    }
+];
+
+// Try different connection targets
+const connectionTargets = [
+    // Try 1: Session pooler
+    {
+        host: 'aws-0-eu-central-1.pooler.supabase.com',
+        port: 5432,
+        database: 'postgres',
+        user: 'postgres.rcyxbenthvrgzhyltuwh',
+        password: 'DobbyRunner123',
     },
-    // Try 3: Require SSL but don't verify
-    'require'
+    // Try 2: Direct connection (if available)
+    {
+        host: 'db.yzpybjdnxoearneimpqw.supabase.co',
+        port: 5432,
+        database: 'postgres',
+        user: 'postgres.rcyxbenthvrgzhyltuwh',
+        password: 'DobbyRunner123',
+    }
 ];
 
 let connectionConfig = {
-    host: 'aws-0-eu-central-1.pooler.supabase.com',
-    port: 5432,
-    database: 'postgres',
-    user: 'postgres.rcyxbenthvrgzhyltuwh',
-    password: 'DobbyRunner123',
+    ...connectionTargets[0],
     ssl: sslConfigs[0], // Start with first config
     max: 20,
     idleTimeoutMillis: 30000,
@@ -55,30 +71,40 @@ console.log("🔧 Connection Config:", {
     ssl: connectionConfig.ssl
 });
 
-// Function to try different SSL configurations
+// Function to try different connection configurations
 async function createPoolWithFallback() {
-    for (let i = 0; i < sslConfigs.length; i++) {
-        try {
-            console.log(`🔄 Trying SSL config ${i + 1}/${sslConfigs.length}:`, sslConfigs[i]);
-            
-            const testConfig = { ...connectionConfig, ssl: sslConfigs[i] };
-            const testPool = new Pool(testConfig);
-            
-            // Test the connection
-            const client = await testPool.connect();
-            const result = await client.query('SELECT NOW()');
-            client.release();
-            
-            console.log(`✅ SSL config ${i + 1} worked! Connected at:`, result.rows[0].now);
-            return testPool;
-            
-        } catch (error) {
-            console.log(`❌ SSL config ${i + 1} failed:`, error.message);
-            if (i === sslConfigs.length - 1) {
-                throw new Error(`All SSL configurations failed. Last error: ${error.message}`);
+    for (let t = 0; t < connectionTargets.length; t++) {
+        const target = connectionTargets[t];
+        console.log(`🎯 Trying connection target ${t + 1}/${connectionTargets.length}: ${target.host}:${target.port}`);
+        
+        for (let i = 0; i < sslConfigs.length; i++) {
+            try {
+                console.log(`  🔄 SSL config ${i + 1}/${sslConfigs.length}:`, sslConfigs[i]);
+                
+                const testConfig = { 
+                    ...target,
+                    ssl: sslConfigs[i],
+                    max: 20,
+                    idleTimeoutMillis: 30000,
+                    connectionTimeoutMillis: 15000,
+                };
+                const testPool = new Pool(testConfig);
+                
+                // Test the connection
+                const client = await testPool.connect();
+                const result = await client.query('SELECT NOW()');
+                client.release();
+                
+                console.log(`✅ SUCCESS! Target ${t + 1}, SSL config ${i + 1} worked! Connected at:`, result.rows[0].now);
+                return testPool;
+                
+            } catch (error) {
+                console.log(`  ❌ Target ${t + 1}, SSL config ${i + 1} failed:`, error.message);
             }
         }
     }
+    
+    throw new Error(`All connection attempts failed. Tried ${connectionTargets.length} targets x ${sslConfigs.length} SSL configs.`);
 }
 
 // Create pool with fallback
