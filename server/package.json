@@ -2,9 +2,9 @@
   "name": "donut-runner-server",
   "version": "1.0.0",
   "description": "Server for Donut Runner game leaderboard",
-  "main": "server.js",
+  "main": "server-pg.js",
   "scripts": {
-    "start": "NODE_OPTIONS='--dns-result-order=ipv4first' node server-pg.js",
+    "start": "node server-pg.js",
     "start:sqlite": "node server.js",
     "start:pg": "NODE_OPTIONS='--dns-result-order=ipv4first' node server-pg.js",
     "dev": "NODE_OPTIONS='--dns-result-order=ipv4first' nodemon server-pg.js",

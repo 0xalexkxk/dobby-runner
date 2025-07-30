@@ -19,93 +19,38 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 let server;
 
-// PostgreSQL connection pool with multiple SSL configurations to try
-const sslConfigs = [
-    // Try 1: Standard SSL config
-    {
-        rejectUnauthorized: false
-    },
-    // Try 2: Disable SSL entirely
-    false,
-    // Try 3: Most permissive SSL
-    {
-        rejectUnauthorized: false,
-        requestCert: false,
-        agent: false
-    }
-];
-
-// Try different connection targets
-const connectionTargets = [
-    // Try 1: Session pooler
-    {
-        host: 'aws-0-eu-central-1.pooler.supabase.com',
-        port: 5432,
-        database: 'postgres',
-        user: 'postgres.rcyxbenthvrgzhyltuwh',
-        password: 'DobbyRunner123',
-    },
-    // Try 2: Direct connection (if available)
-    {
-        host: 'db.yzpybjdnxoearneimpqw.supabase.co',
-        port: 5432,
-        database: 'postgres',
-        user: 'postgres.rcyxbenthvrgzhyltuwh',
-        password: 'DobbyRunner123',
-    }
-];
-
-let connectionConfig = {
-    ...connectionTargets[0],
-    ssl: sslConfigs[0], // Start with first config
+// Simple Neon PostgreSQL connection
+const connectionConfig = {
+    connectionString: process.env.DATABASE_URL,
     max: 20,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 15000,
 };
 
 console.log("🔧 Connection Config:", {
-    host: connectionConfig.host,
-    port: connectionConfig.port,
-    database: connectionConfig.database,
-    user: connectionConfig.user,
-    password: connectionConfig.password.replace(/./g, '*'),
-    ssl: connectionConfig.ssl
+    database: 'Neon PostgreSQL',
+    url: process.env.DATABASE_URL ? '✅ Found' : '❌ Missing'
 });
 
-// Function to try different connection configurations
+// Simple connection test
 async function createPoolWithFallback() {
-    for (let t = 0; t < connectionTargets.length; t++) {
-        const target = connectionTargets[t];
-        console.log(`🎯 Trying connection target ${t + 1}/${connectionTargets.length}: ${target.host}:${target.port}`);
+    try {
+        console.log('🎯 Connecting to Neon PostgreSQL...');
+        const testPool = new Pool(connectionConfig);
         
-        for (let i = 0; i < sslConfigs.length; i++) {
-            try {
-                console.log(`  🔄 SSL config ${i + 1}/${sslConfigs.length}:`, sslConfigs[i]);
-                
-                const testConfig = { 
-                    ...target,
-                    ssl: sslConfigs[i],
-                    max: 20,
-                    idleTimeoutMillis: 30000,
-                    connectionTimeoutMillis: 15000,
-                };
-                const testPool = new Pool(testConfig);
-                
-                // Test the connection
-                const client = await testPool.connect();
-                const result = await client.query('SELECT NOW()');
-                client.release();
-                
-                console.log(`✅ SUCCESS! Target ${t + 1}, SSL config ${i + 1} worked! Connected at:`, result.rows[0].now);
-                return testPool;
-                
-            } catch (error) {
-                console.log(`  ❌ Target ${t + 1}, SSL config ${i + 1} failed:`, error.message);
-            }
-        }
+        // Test the connection
+        const client = await testPool.connect();
+        const result = await client.query('SELECT NOW(), VERSION() as version');
+        client.release();
+        
+        console.log(`✅ SUCCESS! Connected to Neon at:`, result.rows[0].now);
+        console.log(`📋 PostgreSQL version:`, result.rows[0].version.substring(0, 50) + '...');
+        return testPool;
+        
+    } catch (error) {
+        console.log(`❌ Neon connection failed:`, error.message);
+        throw new Error(`Neon PostgreSQL connection failed: ${error.message}`);
     }
-    
-    throw new Error(`All connection attempts failed. Tried ${connectionTargets.length} targets x ${sslConfigs.length} SSL configs.`);
 }
 
 // Database configuration
@@ -454,25 +399,29 @@ app.post('/api/submit-score', async (req, res) => {
             res.json({ 
                 success: true, 
                 message: 'New high score updated!',
-                previousBest: existingScore.rows[0].score,
+                previousBest: existingScore[0].score,
                 newBest: gameData.score
             });
         } else {
             // New player - insert score
-            await pool.query(`
-                INSERT INTO scores (nickname, score, xp, level, game_time, ip_address, user_agent, timestamp, validation_hash)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            `, [
-                nickname,
-                gameData.score,
-                gameData.xp,
-                gameData.level,
-                gameData.gameTime,
-                req.ip,
-                req.get('user-agent'),
-                gameData.timestamp,
-                validationHash
-            ]);
+            await dbUtils.run(
+                usingPostgreSQL ?
+                    `INSERT INTO scores (nickname, score, xp, level, game_time, ip_address, user_agent, timestamp, validation_hash)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)` :
+                    `INSERT INTO scores (nickname, score, xp, level, game_time, ip_address, user_agent, timestamp, validation_hash)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    nickname,
+                    gameData.score,
+                    gameData.xp,
+                    gameData.level,
+                    gameData.gameTime,
+                    req.ip,
+                    req.get('user-agent'),
+                    gameData.timestamp,
+                    validationHash
+                ]
+            );
             
             // Invalidate leaderboard cache
             leaderboardCache.data = null;
@@ -505,18 +454,22 @@ app.post('/api/update-nickname', async (req, res) => {
         }
         
         // Check if new nickname already exists
-        const existing = await pool.query(
-            'SELECT nickname FROM scores WHERE nickname = $1 LIMIT 1',
+        const existing = await dbUtils.query(
+            usingPostgreSQL ?
+                'SELECT nickname FROM scores WHERE nickname = $1 LIMIT 1' :
+                'SELECT nickname FROM scores WHERE nickname = ? LIMIT 1',
             [cleanNewNickname]
         );
         
-        if (existing.rows.length > 0 && cleanOldNickname !== cleanNewNickname) {
+        if (existing.length > 0 && cleanOldNickname !== cleanNewNickname) {
             return res.status(400).json({ error: 'Nickname already taken' });
         }
         
         // Update the nickname
-        await pool.query(
-            'UPDATE scores SET nickname = $1 WHERE nickname = $2',
+        await dbUtils.run(
+            usingPostgreSQL ?
+                'UPDATE scores SET nickname = $1 WHERE nickname = $2' :
+                'UPDATE scores SET nickname = ? WHERE nickname = ?',
             [cleanNewNickname, cleanOldNickname]
         );
         
@@ -540,21 +493,30 @@ app.get('/api/leaderboard', async (req, res) => {
         }
         
         // Get fresh data from database
-        const result = await pool.query(`
-            SELECT nickname, MAX(score) as score, 
-                   MAX(level) as level, MAX(timestamp) as timestamp
-            FROM scores
-            WHERE is_valid = true
-            GROUP BY nickname
-            ORDER BY score DESC
-            LIMIT $1
-        `, [100]); // Always fetch top 100 for cache
+        const result = await dbUtils.query(
+            usingPostgreSQL ?
+                `SELECT nickname, MAX(score) as score, 
+                        MAX(level) as level, MAX(timestamp) as timestamp
+                 FROM scores
+                 WHERE is_valid = true
+                 GROUP BY nickname
+                 ORDER BY score DESC
+                 LIMIT $1` :
+                `SELECT nickname, MAX(score) as score, 
+                        MAX(level) as level, MAX(timestamp) as timestamp
+                 FROM scores
+                 WHERE is_valid = 1
+                 GROUP BY nickname
+                 ORDER BY score DESC
+                 LIMIT ?`,
+            [100]
+        ); // Always fetch top 100 for cache
         
         // Cache the results
-        setCachedLeaderboard(result.rows);
+        setCachedLeaderboard(result);
         
         // Return requested limit
-        res.json(result.rows.slice(0, limit));
+        res.json(result.slice(0, limit));
     } catch (error) {
         requestStats.errorCount++;
         console.error('Error fetching leaderboard:', error);
@@ -571,7 +533,7 @@ app.get('/api/admin/clear-leaderboard', async (req, res) => {
     });
     
     try {
-        const result = await pool.query('DELETE FROM scores');
+        const result = await dbUtils.run('DELETE FROM scores');
         
         console.log(`Cleared ${result.rowCount} scores from leaderboard`);
         
@@ -579,8 +541,8 @@ app.get('/api/admin/clear-leaderboard', async (req, res) => {
         leaderboardCache.data = null;
         
         // Check how many records remain
-        const countResult = await pool.query('SELECT COUNT(*) as count FROM scores');
-        const remaining = countResult.rows[0].count;
+        const countResult = await dbUtils.query('SELECT COUNT(*) as count FROM scores');
+        const remaining = countResult[0].count;
         
         res.json({ 
             success: true, 
@@ -601,17 +563,25 @@ app.get('/api/admin/suspicious', async (req, res) => {
     }
     
     try {
-        const result = await pool.query(`
-            SELECT *
-            FROM scores
-            WHERE is_valid = false
-            OR score > 1000
-            OR game_time < score * 10
-            ORDER BY timestamp DESC
-            LIMIT 50
-        `);
+        const result = await dbUtils.query(
+            usingPostgreSQL ?
+                `SELECT *
+                 FROM scores
+                 WHERE is_valid = false
+                 OR score > 1000
+                 OR game_time < score * 10
+                 ORDER BY timestamp DESC
+                 LIMIT 50` :
+                `SELECT *
+                 FROM scores
+                 WHERE is_valid = 0
+                 OR score > 1000
+                 OR game_time < score * 10
+                 ORDER BY timestamp DESC
+                 LIMIT 50`
+        );
         
-        res.json(result.rows);
+        res.json(result);
     } catch (error) {
         console.error('Error fetching suspicious scores:', error);
         res.status(500).json({ error: 'Server error' });
@@ -626,7 +596,7 @@ app.get('/api/admin/backup-scores', async (req, res) => {
     }
     
     try {
-        const result = await pool.query(`
+        const result = await dbUtils.query(`
             SELECT *
             FROM scores
             ORDER BY timestamp DESC
@@ -637,8 +607,8 @@ app.get('/api/admin/backup-scores', async (req, res) => {
         res.setHeader('Content-Disposition', `attachment; filename="donut-runner-scores-${new Date().toISOString().split('T')[0]}.json"`);
         res.json({
             exportDate: new Date().toISOString(),
-            totalScores: result.rows.length,
-            scores: result.rows
+            totalScores: result.length,
+            scores: result
         });
     } catch (error) {
         console.error('Error backing up scores:', error);
@@ -654,7 +624,7 @@ app.get('/api/health', async (req, res) => {
     // Check database connection
     let dbStatus = 'healthy';
     try {
-        await pool.query('SELECT 1');
+        await dbUtils.query('SELECT 1');
     } catch (err) {
         dbStatus = 'unhealthy';
     }
