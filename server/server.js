@@ -433,6 +433,12 @@ app.get('/api/leaderboard', /* leaderboardLimiter, */ async (req, res) => {
 
 // Admin route to clear leaderboard (GET version for easy browser access)
 app.get('/api/admin/clear-leaderboard', (req, res) => {
+    // TEMPORARILY DISABLED - Remove this block when ready to enable
+    return res.status(403).json({ 
+        error: 'Clear leaderboard is temporarily disabled',
+        message: 'This endpoint has been temporarily disabled for maintenance'
+    });
+    
     db.run('DELETE FROM scores', function(err) {
         if (err) {
             console.error('Error clearing leaderboard:', err);
