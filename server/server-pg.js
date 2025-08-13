@@ -526,16 +526,25 @@ app.get('/api/leaderboard', async (req, res) => {
 
 // Admin route to clear leaderboard (GET version for easy browser access)
 app.get('/api/admin/clear-leaderboard', async (req, res) => {
-    // TEMPORARILY DISABLED - Remove this block when ready to enable
-    return res.status(403).json({ 
-        error: 'Clear leaderboard is temporarily disabled',
-        message: 'This endpoint has been temporarily disabled for maintenance'
-    });
+    // Secret token authentication - only you know this token!
+    const SECRET_TOKEN = 'ultrathink-x7B9mK2pQ4wZ-donut2025';
     
+    // Check if the token is provided and matches
+    const providedToken = req.query.token;
+    
+    if (!providedToken || providedToken !== SECRET_TOKEN) {
+        console.log(`Unauthorized clear attempt from IP: ${req.ip}`);
+        return res.status(403).json({ 
+            error: 'Unauthorized',
+            message: 'Invalid or missing authentication token'
+        });
+    }
+    
+    // Token is valid, proceed with clearing
     try {
         const result = await dbUtils.run('DELETE FROM scores');
         
-        console.log(`Cleared ${result.rowCount} scores from leaderboard`);
+        console.log(`Cleared ${result.rowCount} scores from leaderboard by authorized user`);
         
         // Clear leaderboard cache
         leaderboardCache.data = null;
@@ -546,8 +555,9 @@ app.get('/api/admin/clear-leaderboard', async (req, res) => {
         
         res.json({ 
             success: true, 
-            message: `Cleared ${result.rowCount} scores from leaderboard`,
-            remaining_records: remaining
+            message: `Successfully cleared ${result.rowCount} scores from leaderboard`,
+            remaining_records: remaining,
+            timestamp: new Date().toISOString()
         });
     } catch (error) {
         console.error('Error clearing leaderboard:', error);

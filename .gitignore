@@ -28,3 +28,6 @@ Thumbs.db
 # Build files
 dist/
 build/
+
+# Admin secrets - DO NOT COMMIT
+ADMIN_SECRET.txt
